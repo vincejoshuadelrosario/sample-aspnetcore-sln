@@ -1,4 +1,4 @@
-namespace sample_dotnet_6_0
+namespace sample_dotnet_6_0.Models
 {
     public class WeatherForecast
     {
