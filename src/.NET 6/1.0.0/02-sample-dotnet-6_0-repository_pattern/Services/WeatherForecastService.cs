@@ -1,28 +1,21 @@
 ﻿using sample_dotnet_6_0.Models;
+using sample_dotnet_6_0.Repositories;
 
 namespace sample_dotnet_6_0.Services
 {
     public class WeatherForecastService : IWeatherForecastService
     {
-        private static readonly string[] Summaries = new[]
-        {
-            "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
-        };
 
-        public IEnumerable<WeatherForecast> Get()
+        private readonly IWeatherForecastRepository _weatherForecastRepository;
+
+        public WeatherForecastService(IWeatherForecastRepository weatherForecastRepository)
         {
-            return Enumerable.Range(1, 5).Select(index => new WeatherForecast
-            {
-                Date = DateTime.Now.AddDays(index),
-                TemperatureC = Random.Shared.Next(-20, 55),
-                Summary = Summaries[Random.Shared.Next(Summaries.Length)]
-            })
-            .ToArray();
+            _weatherForecastRepository = weatherForecastRepository;
         }
 
-        public Task<IEnumerable<WeatherForecast>> GetAsync()
+        public async Task<IEnumerable<WeatherForecast>> GetAsync()
         {
-            return Task.FromResult(Get());
+            return await _weatherForecastRepository.GetAsync();
         }
     }
 }
