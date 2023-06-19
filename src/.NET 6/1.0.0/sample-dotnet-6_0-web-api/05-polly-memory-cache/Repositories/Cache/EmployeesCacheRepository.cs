@@ -1,4 +1,7 @@
 ﻿using Microsoft.Extensions.Caching.Memory;
+using Polly;
+using Polly.Caching;
+using Polly.Caching.Memory;
 using sample_dotnet_6_0.Data;
 using sample_dotnet_6_0.Models;
 using System.Collections.Concurrent;
@@ -7,96 +10,76 @@ namespace sample_dotnet_6_0.Repositories.Cache
 {
     internal sealed class EmployeesCacheRepository : ICacheRepository<Employee>
     {
-        private static ConcurrentDictionary<Guid, Employee>? EmployeesCache;
-
-        private readonly IMemoryCache _memoryCache;
+        private readonly CachePolicy<ConcurrentDictionary<Guid, Employee>> _cachePolicy;
         private readonly IDataAccess<Employee> _dataAccess;
 
         public EmployeesCacheRepository(
             IMemoryCache memoryCache,
             IDataAccess<Employee> dataAccess)
         {
-            _memoryCache = memoryCache;
+            var memoryCacheProvider = new MemoryCacheProvider(memoryCache);
+            _cachePolicy = Policy.Cache<ConcurrentDictionary<Guid, Employee>>(memoryCacheProvider, TimeSpan.FromSeconds(60));
             _dataAccess = dataAccess;
         }
 
-        public async Task<IEnumerable<Employee>> GetAsync()
+        public Task<IEnumerable<Employee>> GetAsync() =>
+            Task.FromResult(LoadCache().Values.AsEnumerable() ?? Enumerable.Empty<Employee>());
+
+        public Task<Employee?> GetAsync(Guid id)
         {
-            await LoadCache();
-
-            return EmployeesCache?.Values.AsEnumerable() ?? Enumerable.Empty<Employee>();
-        }
-
-        public async Task<Employee?> GetAsync(Guid id)
-        {
-            await LoadCache();
-
             Employee? employee = null;
-            EmployeesCache?.TryGetValue(id, out employee);
+            LoadCache().TryGetValue(id, out employee);
 
-            return employee;
+            return Task.FromResult(employee);
         }
 
-        public async Task<bool> AddAsync(Employee newEmployee)
+        public Task<bool> AddAsync(Employee newEmployee) =>
+            Task.FromResult(LoadCache().TryAdd(newEmployee.Id, newEmployee));
+
+        public Task<bool> AddAsync(IEnumerable<Employee> employees)
         {
-            await LoadCache();
-
-            return EmployeesCache?.TryAdd(newEmployee.Id, newEmployee) ?? false;
-        }
-
-        public async Task<bool> AddAsync(IEnumerable<Employee> employees)
-        {
-            await LoadCache();
-
             var result = false;
 
             foreach (var employee in employees)
             {
-                result = EmployeesCache?.TryAdd(employee.Id, employee) ?? false;
+                result = LoadCache().TryAdd(employee.Id, employee);
                 if (!result) break;
             }
 
-            return result;
+            return Task.FromResult(result);
         }
 
-        public async Task<bool> UpdateAsync(Employee updatedEmployee)
+        public Task<bool> UpdateAsync(Employee updatedEmployee)
         {
-            await LoadCache();
-
             Employee? oldEmployee = null;
-            EmployeesCache?.TryGetValue(updatedEmployee.Id, out oldEmployee);
+            LoadCache().TryGetValue(updatedEmployee.Id, out oldEmployee);
 
-            if (oldEmployee is null) return false;
+            return Task.FromResult(oldEmployee is null
+                ? false
+                : LoadCache().TryUpdate(updatedEmployee.Id, updatedEmployee, oldEmployee));
 
-            return EmployeesCache?.TryUpdate(updatedEmployee.Id, updatedEmployee, oldEmployee) ?? false;
         }
 
-        public async Task<bool> DeleteAsync(Guid id)
-        {
-            await LoadCache();
-            
-            return EmployeesCache?.TryRemove(id, out _) ?? false;
-        }
+        public Task<bool> DeleteAsync(Guid id) =>
+            Task.FromResult(LoadCache().TryRemove(id, out _));
 
-        private async Task LoadCache()
-        {
-            EmployeesCache = _memoryCache.Get<ConcurrentDictionary<Guid, Employee>>("employees");
+        private ConcurrentDictionary<Guid, Employee> LoadCache() =>
+            _cachePolicy.Execute(_ => InitializeCacheAsync().Result, new Context(nameof(Employee)));
 
-            if (EmployeesCache is null)
+        private async Task<ConcurrentDictionary<Guid, Employee>> InitializeCacheAsync()
+        {
+            await Task.Delay(3000);
+
+            var cache = new ConcurrentDictionary<Guid, Employee>();
+
+            var employees = await _dataAccess.GetAsync();
+
+            foreach (var employee in employees)
             {
-                await Task.Delay(3000);
-
-                EmployeesCache = new ConcurrentDictionary<Guid, Employee>();
-
-                var employees = await _dataAccess.GetAsync();
-
-                foreach(var employee in employees)
-                {
-                    EmployeesCache.TryAdd(employee.Id, employee);
-                }
-
-                _memoryCache.Set("employees", EmployeesCache, TimeSpan.FromSeconds(60));
+                cache.TryAdd(employee.Id, employee);
             }
+
+            return cache;
         }
     }
 }
